@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SymbioCell Simulator v3.0</title>
+<style>
+    body {
+        margin: 0;
+        background: #0f1115;
+        color: #e2e8f0;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+        user-select: none;
+        overflow: hidden;
+    }
+    #toolbar {
+        margin-bottom: 15px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        align-items: center;
+        width: 100%;
+        max-width: 1200px;
+        background: #181d26;
+        padding: 15px;
+        border-radius: 12px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .tool-group {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    .group-label { font-size: 14px; color: #94a3b8; margin-right: 4px; font-weight: 600; }
+    .tool-btn {
+        width: 44px; height: 44px;
+        border: 2px solid transparent;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 14px;
+        transition: transform 0.1s, box-shadow 0.1s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+    }
+    .tool-btn:hover { transform: translateY(-2px); }
+    .tool-btn.active {
+        border-color: #fff;
+        box-shadow: 0 0 14px rgba(255,255,255,0.8);
+        transform: translateY(-2px);
+    }
+    .control-btn {
+        padding: 8px 20px;
+        cursor: pointer;
+        background: #2d3748;
+        color: #fff;
+        border: 1px solid #4a5568;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        transition: background 0.2s;
+    }
+    .control-btn:hover { background: #4a5568; }
+    .control-btn.primary { background: #2b6cb0; border-color: #2b6cb0; }
+    .control-btn.primary:hover { background: #3182ce; }
+    
+    .slider-container {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        color: #a0aec0;
+        background: #10141d;
+        padding: 6px 12px;
+        border-radius: 8px;
+    }
+    input[type=range] {
+        cursor: pointer;
+        accent-color: #3182ce;
+    }
+
+    #info { font-size: 13px; color: #718096; text-align: center; line-height: 1.6; }
+    #info span { color: #cbd5e0; font-weight: bold; }
+    
+    /* 视口滚动容器 */
+    #viewContainer {
+        width: 92vw;
+        height: 65vh;
+        border: 2px solid #2d3748;
+        background: #090b0e;
+        overflow: auto;
+        position: relative;
+        border-radius: 8px;
+        box-shadow: inset 0 4px 12px rgba(0,0,0,0.8);
+    }
+    /* 用于撑起滚动条的绝对定位虚拟大空间 */
+    #virtualSpacer {
+        position: absolute;
+        top: 0; left: 0;
+        pointer-events: none;
+    }
+    /* 固定在视口之上的高效画布 */
+    canvas {
+        position: sticky;
+        top: 0; left: 0;
+        display: block;
+        image-rendering: pixelated;
+        cursor: crosshair;
+    }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+    <div class="tool-group">
+        <span class="group-label">生物组件绘制：</span>
+        <button class="tool-btn active" data-tool="0" style="background:#1a202c; color:#fff; border:1px solid #4a5568;" title="擦除">␡</button>
+        <button class="tool-btn" data-tool="1" style="background:#2ecc71; color:#000;" title="绿色（蓝藻：光合能）">绿</button>
+        <button class="tool-btn" data-tool="2" style="background:#3498db; color:#fff;" title="蓝色（鞭毛：运动推动）">蓝</button>
+        <button class="tool-btn" data-tool="3" style="background:#e74c3c; color:#fff;" title="红色（巨噬：群聚捕食）">红</button>
+        <button class="tool-btn" data-tool="4" style="background:#e67e22; color:#fff;" title="橙色（外骨骼：受控外壳）">橙</button>
+        <button class="tool-btn" data-tool="5" style="background:#f1c40f; color:#000;" title="黄色('溶酶体'：尸体分解)">黄</button>
+        <button class="tool-btn" data-tool="6" style="background:#9b59b6; color:#fff;" title="紫色（古菌：厌氧能）">紫</button>
+    </div>
+    <div class="tool-group">
+        <span class="group-label">环境主控：</span>
+        <button id="btnToggle" class="control-btn primary">▶ 开始演化</button>
+        <button id="btnClear" class="control-btn">🗑 净化皿</button>
+        <button id="btnRandom" class="control-btn">🎲 散落种子</button>
+        
+        <div class="slider-container">
+            <span>演化速率：</span>
+            <input type="range" id="speedSlider" min="16" max="1000" value="100" step="10">
+            <span id="speedValue">100ms</span>
+        </div>
+    </div>
+    <div id="info">
+        状态：<span id="status">已暂停</span> | 世代步数：<span id="stepCount">0</span> | 当前视野尺度：<span id="zoomScale">18px</span><br>
+        控制体系：使用 <b>Ctrl + 鼠标滚轮</b> 即可进行全方向（上下左右）等比精细微调缩放。拖动滚动条巡视培养皿。
+    </div>
+</div>
+
+<div id="viewContainer">
+    <div id="virtualSpacer"></div>
+    <canvas id="canvas"></canvas>
+</div>
+
+<script>
+// ================= 配置与常量 =================
+const W = 1000, H = 1000, N = W * H;
+const LIGHT_Y = 500;
+let STEP_INTERVAL = 100; 
+
+const EMPTY = 0, GREEN = 1, BLUE = 2, RED = 3, ORANGE = 4, YELLOW = 5, PURPLE = 6, CORPSE = 7;
+
+// 高级荧光深色护眼生物色系
+const COLOR_STRINGS = [
+    null, '#2ecc71', '#3498db', '#e74c3c', '#e67e22', '#f1c40f', '#9b59b6', '#526173'
+];
+const BG_LIGHT = '#1a221d'; // 暗绿底（透光层）
+const BG_DARK = '#151622';  // 暗紫底（厌氧层）
+
+const DX = [0, 0, -1, 1];
+const DY = [-1, 1, 0, 0];
+
+// ================= 数据结构 =================
+let curState = new Uint8Array(N), curDir = new Uint8Array(N), curAge = new Uint8Array(N);
+let nxtState = new Uint8Array(N), nxtDir = new Uint8Array(N), nxtAge = new Uint8Array(N);
+
+const MAX_INTENTS = 300000;
+let intentBlue = new Int32Array(MAX_INTENTS), intentLen = new Int32Array(MAX_INTENTS), intentDir = new Int8Array(MAX_INTENTS);
+let intentCount = 0;
+let occupied = new Uint8Array(N);
+
+// 性能极致优化：重用固定内存结构
+const emptyIndices = new Int32Array(8); 
+const neighborIndices = new Int32Array(8);
+const componentTypes = new Int8Array(9);
+
+// ================= 伪随机数 =================
+let seed = 123456789;
+function rand() { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; }
+function randInt(max) { return (rand() * max) | 0; }
+
+// ================= 视口与缩放渲染系统 =================
+let cellSize = 18; 
+const viewContainer = document.getElementById('viewContainer');
+const virtualSpacer = document.getElementById('virtualSpacer');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+function updateSpacer() {
+    virtualSpacer.style.width = (W * cellSize) + 'px';
+    virtualSpacer.style.height = (H * cellSize) + 'px';
+}
+
+function render() {
+    const viewW = viewContainer.clientWidth;
+    const viewH = viewContainer.clientHeight;
+    if (canvas.width !== viewW || canvas.height !== viewH) {
+        canvas.width = viewW;
+        canvas.height = viewH;
+    }
+
+    const scrollX = viewContainer.scrollLeft;
+    const scrollY = viewContainer.scrollTop;
+
+    const startX = Math.max(0, Math.floor(scrollX / cellSize));
+    const endX = Math.min(W, Math.ceil((scrollX + viewW) / cellSize));
+    const startY = Math.max(0, Math.floor(scrollY / cellSize));
+    const endY = Math.min(H, Math.ceil((scrollY + viewH) / cellSize));
+
+    const lightEndY = Math.min(endY, LIGHT_Y);
+    if (startY < LIGHT_Y) {
+        ctx.fillStyle = BG_LIGHT;
+        ctx.fillRect(0, Math.max(0, startY * cellSize - scrollY), viewW, (lightEndY - startY) * cellSize);
+    }
+    if (endY > LIGHT_Y) {
+        ctx.fillStyle = BG_DARK;
+        ctx.fillRect(0, Math.max(0, LIGHT_Y * cellSize - scrollY), viewW, (endY - Math.max(startY, LIGHT_Y)) * cellSize);
+    }
+
+    for (let y = startY; y < endY; y++) {
+        const rowOffset = y * W;
+        const renderY = y * cellSize - scrollY;
+        for (let x = startX; x < endX; x++) {
+            const s = curState[rowOffset + x]; 
+            if (s !== EMPTY) {
+                ctx.fillStyle = COLOR_STRINGS[s];
+                ctx.fillRect(x * cellSize - scrollX, renderY, cellSize, cellSize);
+                
+                if (s === BLUE) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    const dir = curDir[rowOffset + x];
+                    const cx = x * cellSize - scrollX + cellSize / 2;
+                    const cy = renderY + cellSize / 2;
+                    ctx.beginPath();
+                    if (dir === 0) { ctx.moveTo(cx, cy - 3); ctx.lineTo(cx - 3, cy + 2); ctx.lineTo(cx + 3, cy + 2); } 
+                    else if (dir === 1) { ctx.moveTo(cx, cy + 3); ctx.lineTo(cx - 3, cy - 2); ctx.lineTo(cx + 3, cy - 2); } 
+                    else if (dir === 2) { ctx.moveTo(cx - 3, cy); ctx.lineTo(cx + 2, cy - 3); ctx.lineTo(cx + 2, cy + 3); } 
+                    else if (dir === 3) { ctx.moveTo(cx + 3, cy); ctx.lineTo(cx - 2, cy - 3); ctx.lineTo(cx - 2, cy + 3); } 
+                    ctx.fill();
+                }
+            }
+        }
+    }
+}
+
+viewContainer.addEventListener('scroll', render);
+
+// 彻底改善：Ctrl+滚轮支持上下、左右全向无缝等比缩放
+viewContainer.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) {
+        e.preventDefault();
+        const oldCellSize = cellSize;
+        if (e.deltaY < 0) {
+            cellSize = Math.min(60, cellSize + 2);
+        } else {
+            cellSize = Math.max(4, cellSize - 2);
+        }
+        document.getElementById('zoomScale').innerText = cellSize + 'px';
+        
+        const rect = viewContainer.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left + viewContainer.scrollLeft;
+        const mouseY = e.clientY - rect.top + viewContainer.scrollTop;
+        
+        const gridX = mouseX / oldCellSize;
+        const gridY = mouseY / oldCellSize;
+
+        updateSpacer();
+        // 完美的双轴同步重定位
+        viewContainer.scrollLeft = gridX * cellSize - (e.clientX - rect.left);
+        viewContainer.scrollTop = gridY * cellSize - (e.clientY - rect.top);
+        render();
+    }
+}, { passive: false });
+
+// 速度滑块事件绑定
+document.getElementById('speedSlider').addEventListener('input', function() {
+    STEP_INTERVAL = parseInt(this.value);
+    document.getElementById('speedValue').innerText = STEP_INTERVAL + 'ms';
+});
+
+
+// ================= 核心自组织生命演化逻辑 =================
+function update() {
+    nxtState.set(curState); nxtDir.set(curDir); nxtAge.set(curAge);
+
+    for (let y = 0; y < H; y++) {
+        const topY = y === 0 ? H - 1 : y - 1;
+        const botY = y === H - 1 ? 0 : y + 1;
+        const rowOff = y * W, topOff = topY * W, botOff = botY * W;
+
+        for (let x = 0; x < W; x++) {
+            const i = rowOff + x;
+            const s = curState[i];
+            if (s === EMPTY) continue;
+
+            const leftX = x === 0 ? W - 1 : x - 1;
+            const rightX = x === W - 1 ? 0 : x + 1;
+
+            neighborIndices[0] = topOff + x;      
+            neighborIndices[1] = botOff + x;      
+            neighborIndices[2] = rowOff + leftX;   
+            neighborIndices[3] = rowOff + rightX;  
+            neighborIndices[4] = topOff + leftX;   
+            neighborIndices[5] = topOff + rightX;  
+            neighborIndices[6] = botOff + leftX;   
+            neighborIndices[7] = botOff + rightX;  
+
+            if (s === GREEN || s === PURPLE) {
+                if ((s === GREEN && y >= LIGHT_Y) || (s === PURPLE && y < LIGHT_Y)) {
+                    nxtState[i] = CORPSE; nxtAge[i] = 0;
+                } else {
+                    let emptyCount = 0;
+                    for (let k = 0; k < 8; k++) {
+                        if (curState[neighborIndices[k]] === EMPTY) {
+                            emptyIndices[emptyCount++] = neighborIndices[k];
+                        }
+                    }
+                    if (emptyCount === 0) { 
+                        nxtState[i] = CORPSE; nxtAge[i] = 0; 
+                    } else {
+                        const roll = rand();
+                        if (roll < 0.333) {
+                            // 突变：转化产生各类功能型器官细胞
+                            let mutatedType = randInt(5) + 1;
+                            if (mutatedType >= s) mutatedType++; 
+                            const target = emptyIndices[randInt(emptyCount)];
+                            if (nxtState[target] === EMPTY) {
+                                nxtState[target] = mutatedType;
+                                if (mutatedType === BLUE) nxtDir[target] = randInt(4);
+                            }
+                        } 
+                        else if (roll < 0.666) {
+                            // 联动多细胞复制
+                            let compLen = 0;
+                            componentTypes[compLen++] = s; 
+                            for (let k = 0; k < 8; k++) {
+                                const ns = curState[neighborIndices[k]];
+                                if (ns !== EMPTY && ns !== CORPSE) {
+                                    componentTypes[compLen++] = ns;
+                                }
+                            }
+                            for (let k = 0; k < emptyCount; k++) {
+                                if (rand() < 0.6) { 
+                                    const target = emptyIndices[k];
+                                    if (nxtState[target] === EMPTY) {
+                                        const chosenType = componentTypes[randInt(compLen)];
+                                        nxtState[target] = chosenType;
+                                        if (chosenType === BLUE) nxtDir[target] = randInt(4);
+                                    }
+                                }
+                            }
+                        } 
+                        else if (roll < 0.998) {
+                            // 稳定单体复制
+                            const target = emptyIndices[randInt(emptyCount)];
+                            if (nxtState[target] === EMPTY) {
+                                nxtState[target] = s;
+                            }
+                        }
+                    }
+                }
+            } 
+            else if (s === RED) {
+                // 【规则修改】重新定义狼群博弈：只有周围同类红色细胞数量 >= 4 时才触发自残式内讧
+                let redCount = 0;
+                for (let k = 0; k < 8; k++) {
+                    if (curState[neighborIndices[k]] === RED) redCount++;
+                }
+                
+                if (redCount >= 4) {
+                    nxtState[i] = CORPSE; nxtAge[i] = 0; 
+                } else {
+                    // 疯狂杀戮周围异类生命组件并清除尸体
+                    for (let k = 0; k < 8; k++) {
+                        const ns = curState[neighborIndices[k]];
+                        if (ns >= GREEN && ns <= PURPLE && ns !== RED) { 
+                            nxtState[neighborIndices[k]] = CORPSE; 
+                            nxtAge[neighborIndices[k]] = 0; 
+                        } 
+                        else if (ns === CORPSE) {
+                            nxtState[neighborIndices[k]] = EMPTY;
+                        }
+                    }
+                }
+            } 
+            else if (s === ORANGE) {
+                // 【新规则修改】橙色骨骼外壳代谢判定
+                let hasEnergyHost = false;
+                let orangeCount = 0;
+                for (let k = 0; k < 8; k++) {
+                    const ns = curState[neighborIndices[k]];
+                    if (ns === GREEN || ns === PURPLE) hasEnergyHost = true;
+                    if (ns === ORANGE) orangeCount++;
+                }
+                // 失去核心绿/紫供能，或者由于外壳过于厚重密集(>=4个橙色邻居)，则转化为尸体
+                if (!hasEnergyHost || orangeCount >= 4) {
+                    nxtState[i] = CORPSE;
+                    nxtAge[i] = 0;
+                }
+            } 
+            else if (s === YELLOW) {
+                // 【新规则修改】黄色巡道清洁工饥饿判定
+                let corpseCount = 0;
+                for (let k = 0; k < 8; k++) {
+                    if (curState[neighborIndices[k]] === CORPSE) corpseCount++;
+                }
+                
+                if (corpseCount <= 4) {
+                    // 尸体过少，缺乏营养输入，导致溶酶破裂死亡
+                    nxtState[i] = CORPSE;
+                    nxtAge[i] = 0;
+                } else {
+                    // 尸体充沛 (>4)，黄色存活并正常开始高效率分解吞噬周围所有尸体
+                    for (let k = 0; k < 8; k++) {
+                        if (curState[neighborIndices[k]] === CORPSE) nxtState[neighborIndices[k]] = EMPTY;
+                    }
+                }
+            } 
+            else if (s === CORPSE) {
+                let age = curAge[i] + 1, allDead = true;
+                for (let k = 0; k < 8; k++) if (curState[neighborIndices[k]] !== CORPSE) { allDead = false; break; }
+                if (allDead) nxtAge[i] = age; 
+                else if (age >= 3) nxtState[i] = EMPTY; 
+                else nxtAge[i] = age;
+            }
+        }
+    }
+
+    // 阶段 2：蓝色位移物理处理
+    intentCount = 0; occupied.fill(0);
+    for (let i = 0; i < N; i++) {
+        if (nxtState[i] === BLUE) {
+            const x = i % W, y = (i / W) | 0;
+            const dir = nxtDir[i], dx = DX[dir], dy = DY[dir];
+            let cx = ((x + dx) % W + W) % W, cy = ((y + dy) % H + H) % H;
+            let chainLen = 0, valid = true;
+            
+            // 【卡顿死结优化】引入物理最大负荷推力限制(MAX_CHAIN=12)，防止密闭塞车时的超长无限while检索
+            const MAX_CHAIN = 12;
+            while (chainLen < MAX_CHAIN) {
+                const idx = cy * W + cx, s = nxtState[idx];
+                if (s === EMPTY) { chainLen++; break; } 
+                else if (s === GREEN || s === RED || s === YELLOW || s === PURPLE || s === BLUE) {
+                    chainLen++; 
+                    cx = ((cx + dx) % W + W) % W; 
+                    cy = ((cy + dy) % H + H) % H;
+                    if (cx === x && cy === y) { valid = false; break; } 
+                } else { 
+                    valid = false; break; 
+                }
+            }
+            if (chainLen >= MAX_CHAIN) valid = false; 
+            
+            if (valid && chainLen > 0 && intentCount < MAX_INTENTS) {
+                intentBlue[intentCount] = i; 
+                intentLen[intentCount] = chainLen; 
+                intentDir[intentCount] = dir; 
+                intentCount++;
+            }
+        }
+    }
+
+    for (let i = intentCount - 1; i > 0; i--) {
+        const j = randInt(i + 1);
+        let tmp = intentBlue[i]; intentBlue[i] = intentBlue[j]; intentBlue[j] = tmp;
+        tmp = intentLen[i]; intentLen[i] = intentLen[j]; intentLen[j] = tmp;
+        tmp = intentDir[i]; intentDir[i] = intentDir[j]; intentDir[j] = tmp;
+    }
+
+    for (let k = 0; k < intentCount; k++) {
+        const blueIdx = intentBlue[k], chainLen = intentLen[k], dir = intentDir[k];
+        const bx = blueIdx % W, by = (blueIdx / W) | 0, dx = DX[dir], dy = DY[dir];
+        let conflict = false, cx = ((bx + dx) % W + W) % W, cy = ((by + dy) % H + H) % H;
+        for (let m = 0; m < chainLen; m++) {
+            const idx = cy * W + cx;
+            if (occupied[idx]) { conflict = true; break; }
+            cx = ((cx + dx) % W + W) % W; cy = ((cy + dy) % H + H) % H;
+        }
+        if (conflict) continue;
+
+        let endX = ((bx + dx * chainLen) % W + W) % W, endY = ((by + dy * chainLen) % H + H) % H;
+        let nextIdx = endY * W + endX;
+        let prevX = ((endX - dx) % W + W) % W, prevY = ((endY - dy) % H + H) % H, prevIdx = prevY * W + prevX;
+
+        for (let m = 0; m < chainLen - 1; m++) {
+            nxtState[nextIdx] = nxtState[prevIdx]; nxtDir[nextIdx] = nxtDir[prevIdx]; nxtAge[nextIdx] = nxtAge[prevIdx]; occupied[nextIdx] = 1;
+            nextIdx = prevIdx; prevX = ((prevX - dx) % W + W) % W; prevY = ((prevY - dy) % H + H) % H; prevIdx = prevY * W + prevX;
+        }
+        nxtState[nextIdx] = BLUE; nxtDir[nextIdx] = dir; nxtAge[nextIdx] = 0; occupied[nextIdx] = 1;
+        nxtState[blueIdx] = EMPTY;
+    }
+
+    [curState, nxtState] = [nxtState, curState];
+    [curDir, nxtDir] = [nxtDir, curDir];
+    [curAge, nxtAge] = [nxtAge, curAge];
+}
+
+// ================= 屏幕交互控制与点击映射 =================
+let isRunning = false;
+let stepCount = 0;
+let lastStepTime = 0;
+let currentTool = 0;
+let isDrawing = false;
+let lastDrawIdx = -1;
+
+function getCanvasIdx(e) {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left + viewContainer.scrollLeft;
+    const clickY = e.clientY - rect.top + viewContainer.scrollTop;
+    const x = Math.floor(clickX / cellSize);
+    const y = Math.floor(clickY / cellSize);
+    return (x >= 0 && x < W && y >= 0 && y < H) ? y * W + x : -1;
+}
+
+function drawAt(idx, isClick) {
+    if (idx === -1) return;
+    if (currentTool === 0) {
+        curState[idx] = EMPTY;
+    } else if (currentTool === 2 && curState[idx] === BLUE) {
+        if (isClick) curDir[idx] = (curDir[idx] + 1) % 4;
+        else return; 
+    } else {
+        curState[idx] = currentTool;
+        if (currentTool === BLUE) curDir[idx] = randInt(4);
+    }
+    nxtState[idx] = curState[idx]; nxtDir[idx] = curDir[idx]; nxtAge[idx] = curAge[idx];
+    render();
+}
+
+canvas.addEventListener('mousedown', (e) => { e.preventDefault(); isDrawing = true; const idx = getCanvasIdx(e); lastDrawIdx = idx; drawAt(idx, true); });
+canvas.addEventListener('mousemove', (e) => { if (!isDrawing) return; const idx = getCanvasIdx(e); if (idx !== lastDrawIdx) { lastDrawIdx = idx; drawAt(idx, false); } });
+window.addEventListener('mouseup', () => { isDrawing = false; lastDrawIdx = -1; });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+document.querySelectorAll('.tool-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTool = parseInt(btn.dataset.tool);
+    });
+});
+
+document.getElementById('btnToggle').addEventListener('click', function() {
+    isRunning = !isRunning;
+    this.innerText = isRunning ? '⏸ 暂停演化' : '▶ 开始演化';
+    document.getElementById('status').innerText = isRunning ? '运行中' : '已暂停';
+    if (isRunning) lastStepTime = performance.now();
+});
+
+document.getElementById('btnClear').addEventListener('click', () => {
+    curState.fill(EMPTY); curDir.fill(0); curAge.fill(0); nxtState.fill(EMPTY);
+    stepCount = 0; document.getElementById('stepCount').innerText = 0;
+    render();
+});
+
+document.getElementById('btnRandom').addEventListener('click', () => {
+    curState.fill(EMPTY); curDir.fill(0); curAge.fill(0);
+    for (let i = 0; i < N; i++) {
+        const r = rand();
+        if (r < 0.005) curState[i] = GREEN;
+        else if (r < 0.010) curState[i] = PURPLE;
+        else if (r < 0.012) curState[i] = BLUE;
+        else if (r < 0.015) curState[i] = RED; // 稍微调高红色种子几率，激活生物群聚
+        else if (r < 0.016) curState[i] = ORANGE;
+        else if (r < 0.017) curState[i] = YELLOW;
+        if (curState[i] === BLUE) curDir[i] = randInt(4);
+    }
+    nxtState.set(curState); nxtDir.set(curDir); nxtAge.set(curAge);
+    stepCount = 0; document.getElementById('stepCount').innerText = 0;
+    render();
+});
+
+function loop(timestamp) {
+    if (isRunning && timestamp - lastStepTime >= STEP_INTERVAL) {
+        update();
+        render();
+        stepCount++;
+        document.getElementById('stepCount').innerText = stepCount;
+        lastStepTime = timestamp;
+    } else if (!isRunning) {
+        render();
+    }
+    requestAnimationFrame(loop);
+}
+
+// 启动
+updateSpacer();
+render();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
