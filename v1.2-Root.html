@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>元胞自动机 v2.1 - 内共生多细胞演化版 (修复完整版)</title>
+<style>
+    body {
+        margin: 0;
+        background: #1a1a1a;
+        color: #eee;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 20px;
+        user-select: none;
+        overflow: hidden;
+    }
+    #toolbar {
+        margin-bottom: 15px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        align-items: center;
+        width: 100%;
+        max-width: 1200px;
+    }
+    .tool-group {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    .group-label { font-size: 14px; color: #aaa; margin-right: 4px; }
+    .tool-btn {
+        width: 40px; height: 40px;
+        border: 2px solid transparent;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 14px;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .tool-btn:hover { transform: translateY(-2px); }
+    .tool-btn.active {
+        border-color: #fff;
+        box-shadow: 0 0 12px rgba(255,255,255,0.6);
+        transform: translateY(-2px);
+    }
+    .control-btn {
+        padding: 8px 18px;
+        cursor: pointer;
+        background: #333;
+        color: #fff;
+        border: 1px solid #555;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        transition: background 0.2s;
+    }
+    .control-btn:hover { background: #444; }
+    .control-btn.primary { background: #0066cc; border-color: #0055aa; }
+    .control-btn.primary:hover { background: #0077ee; }
+    #info { font-size: 13px; color: #888; text-align: center; line-height: 1.5; }
+    #info span { color: #ccc; font-weight: bold; }
+    
+    /* 视口滚动容器 */
+    #viewContainer {
+        width: 90vw;
+        height: 70vh;
+        border: 2px solid #444;
+        background: #222;
+        overflow: auto;
+        position: relative;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    /* 用于撑起滚动条的绝对定位虚拟大空间 */
+    #virtualSpacer {
+        position: absolute;
+        top: 0; left: 0;
+        pointer-events: none;
+    }
+    /* 固定在视口之上的高效画布 */
+    canvas {
+        position: sticky;
+        top: 0; left: 0;
+        display: block;
+        image-rendering: pixelated;
+        cursor: crosshair;
+    }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+    <div class="tool-group">
+        <span class="group-label">绘制：</span>
+        <button class="tool-btn active" data-tool="0" style="background:#222; color:#fff; border:1px solid #555;" title="橡皮擦">␡</button>
+        <button class="tool-btn" data-tool="1" style="background:#00c800;" title="绿色（蓝藻）">绿</button>
+        <button class="tool-btn" data-tool="2" style="background:#0064ff; color:#fff;" title="蓝色（运动鞭毛）">蓝</button>
+        <button class="tool-btn" data-tool="3" style="background:#ff0000;" title="红色（捕食巨噬）">红</button>
+        <button class="tool-btn" data-tool="4" style="background:#ff8c00;" title="橙色（骨架墙）">橙</button>
+        <button class="tool-btn" data-tool="5" style="background:#ffff00; color:#333;" title="黄色（溶酶清洁）">黄</button>
+        <button class="tool-btn" data-tool="6" style="background:#960096; color:#fff;" title="紫色（古菌）">紫</button>
+    </div>
+    <div class="tool-group">
+        <span class="group-label">控制：</span>
+        <button id="btnToggle" class="control-btn primary">▶ 开始</button>
+        <button id="btnClear" class="control-btn">🗑 清除</button>
+        <button id="btnRandom" class="control-btn">🎲 随机</button>
+    </div>
+    <div id="info">
+        状态：<span id="status">已暂停</span> | 步数：<span id="stepCount">0</span> | 当前网格缩放：<span id="zoomScale">18px</span><br>
+        进化提示：绿/紫演化出<b>内共生机制</b>（33.3%突变其他细胞、33.3%连带邻居复制为复合整体组织、33.2%正常复制、0.2%失败）。<br>
+        操作提示：使用 <b>Ctrl + 鼠标滚轮</b> 可放大缩小视口，拖动滚动条查看全场。
+    </div>
+</div>
+
+<div id="viewContainer">
+    <div id="virtualSpacer"></div>
+    <canvas id="canvas"></canvas>
+</div>
+
+<script>
+// ================= 配置与常量 =================
+const W = 1000, H = 1000, N = W * H;
+const LIGHT_Y = 500;
+const STEP_INTERVAL = 100; // 优化性能后，缩短间隔让演化更流畅
+
+const EMPTY = 0, GREEN = 1, BLUE = 2, RED = 3, ORANGE = 4, YELLOW = 5, PURPLE = 6, CORPSE = 7;
+
+const COLOR_STRINGS = [
+    null, '#00c800', '#0064ff', '#ff0000', '#ff8c00', '#ffff00', '#960096', '#646464'
+];
+const BG_LIGHT = '#ffffff';
+const BG_DARK = '#c8c8c8';
+
+const DX = [0, 0, -1, 1];
+const DY = [-1, 1, 0, 0];
+
+// ================= 数据结构 =================
+let curState = new Uint8Array(N), curDir = new Uint8Array(N), curAge = new Uint8Array(N);
+let nxtState = new Uint8Array(N), nxtDir = new Uint8Array(N), nxtAge = new Uint8Array(N);
+
+const MAX_INTENTS = 300000;
+let intentBlue = new Int32Array(MAX_INTENTS), intentLen = new Int32Array(MAX_INTENTS), intentDir = new Int8Array(MAX_INTENTS);
+let intentCount = 0;
+let occupied = new Uint8Array(N);
+
+// 性能优化：全局重用结构
+const emptyIndices = new Int32Array(8); 
+const neighborIndices = new Int32Array(8);
+const componentTypes = new Int8Array(9);
+
+// ================= 伪随机数 =================
+let seed = 123456789;
+function rand() { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; }
+function randInt(max) { return (rand() * max) | 0; }
+
+// ================= 视口与缩放渲染系统 =================
+let cellSize = 18; 
+const viewContainer = document.getElementById('viewContainer');
+const virtualSpacer = document.getElementById('virtualSpacer');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+function updateSpacer() {
+    virtualSpacer.style.width = (W * cellSize) + 'px';
+    virtualSpacer.style.height = (H * cellSize) + 'px';
+}
+
+function render() {
+    const viewW = viewContainer.clientWidth;
+    const viewH = viewContainer.clientHeight;
+    if (canvas.width !== viewW || canvas.height !== viewH) {
+        canvas.width = viewW;
+        canvas.height = viewH;
+    }
+
+    const scrollX = viewContainer.scrollLeft;
+    const scrollY = viewContainer.scrollTop;
+
+    const startX = Math.max(0, Math.floor(scrollX / cellSize));
+    const endX = Math.min(W, Math.ceil((scrollX + viewW) / cellSize));
+    const startY = Math.max(0, Math.floor(scrollY / cellSize));
+    const endY = Math.min(H, Math.ceil((scrollY + viewH) / cellSize));
+
+    const lightEndY = Math.min(endY, LIGHT_Y);
+    if (startY < LIGHT_Y) {
+        ctx.fillStyle = BG_LIGHT;
+        ctx.fillRect(0, Math.max(0, startY * cellSize - scrollY), viewW, (lightEndY - startY) * cellSize);
+    }
+    if (endY > LIGHT_Y) {
+        ctx.fillStyle = BG_DARK;
+        ctx.fillRect(0, Math.max(0, LIGHT_Y * cellSize - scrollY), viewW, (endY - Math.max(startY, LIGHT_Y)) * cellSize);
+    }
+
+    for (let y = startY; y < endY; y++) {
+        const rowOffset = y * W;
+        const renderY = y * cellSize - scrollY;
+        for (let x = startX; x < endX; x++) {
+            const s = curState[rowOffset + x]; 
+            if (s !== EMPTY) {
+                ctx.fillStyle = COLOR_STRINGS[s];
+                ctx.fillRect(x * cellSize - scrollX, renderY, cellSize, cellSize);
+                
+                if (s === BLUE) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                    const dir = curDir[rowOffset + x];
+                    const cx = x * cellSize - scrollX + cellSize / 2;
+                    const cy = renderY + cellSize / 2;
+                    ctx.beginPath();
+                    if (dir === 0) { ctx.moveTo(cx, cy - 4); ctx.lineTo(cx - 3, cy + 2); ctx.lineTo(cx + 3, cy + 2); } 
+                    else if (dir === 1) { ctx.moveTo(cx, cy + 4); ctx.lineTo(cx - 3, cy - 2); ctx.lineTo(cx + 3, cy - 2); } 
+                    else if (dir === 2) { ctx.moveTo(cx - 4, cy); ctx.lineTo(cx + 2, cy - 3); ctx.lineTo(cx + 2, cy + 3); } 
+                    else if (dir === 3) { ctx.moveTo(cx + 4, cy); ctx.lineTo(cx - 2, cy - 3); ctx.lineTo(cx - 2, cy + 3); } 
+                    ctx.fill();
+                }
+            }
+        }
+    }
+}
+
+viewContainer.addEventListener('scroll', render);
+
+viewContainer.addEventListener('wheel', (e) => {
+    if (e.ctrlKey) {
+        e.preventDefault();
+        const oldCellSize = cellSize;
+        if (e.deltaY < 0) {
+            cellSize = Math.min(50, cellSize + 2);
+        } else {
+            cellSize = Math.max(4, cellSize - 2);
+        }
+        document.getElementById('zoomScale').innerText = cellSize + 'px';
+        
+        const rect = viewContainer.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left + viewContainer.scrollLeft;
+        const mouseY = e.clientY - rect.top + viewContainer.scrollTop;
+        const gridX = mouseX / oldCellSize;
+        const gridY = mouseY / oldCellSize;
+
+        updateSpacer();
+        viewContainer.scrollLeft = gridX * cellSize - (e.clientX - rect.left);
+        viewContainer.scrollTop = gridY * cellSize - (e.clientY - rect.top);
+        render();
+    }
+}, { passive: false });
+
+// ================= 核心自组织生命演化逻辑 =================
+function update() {
+    nxtState.set(curState); nxtDir.set(curDir); nxtAge.set(curAge);
+
+    for (let y = 0; y < H; y++) {
+        const topY = y === 0 ? H - 1 : y - 1;
+        const botY = y === H - 1 ? 0 : y + 1;
+        const rowOff = y * W, topOff = topY * W, botOff = botY * W;
+
+        for (let x = 0; x < W; x++) {
+            const i = rowOff + x;
+            const s = curState[i];
+            if (s === EMPTY) continue;
+
+            const leftX = x === 0 ? W - 1 : x - 1;
+            const rightX = x === W - 1 ? 0 : x + 1;
+
+            neighborIndices[0] = topOff + x;      
+            neighborIndices[1] = botOff + x;      
+            neighborIndices[2] = rowOff + leftX;   
+            neighborIndices[3] = rowOff + rightX;  
+            neighborIndices[4] = topOff + leftX;   
+            neighborIndices[5] = topOff + rightX;  
+            neighborIndices[6] = botOff + leftX;   
+            neighborIndices[7] = botOff + rightX;  
+
+            if (s === GREEN || s === PURPLE) {
+                if ((s === GREEN && y >= LIGHT_Y) || (s === PURPLE && y < LIGHT_Y)) {
+                    nxtState[i] = CORPSE; nxtAge[i] = 0;
+                } else {
+                    let emptyCount = 0;
+                    for (let k = 0; k < 8; k++) {
+                        if (curState[neighborIndices[k]] === EMPTY) {
+                            emptyIndices[emptyCount++] = neighborIndices[k];
+                        }
+                    }
+                    if (emptyCount === 0) { 
+                        nxtState[i] = CORPSE; nxtAge[i] = 0; 
+                    } else {
+                        const roll = rand();
+                        if (roll < 0.333) {
+                            let mutatedType = randInt(5) + 1;
+                            if (mutatedType >= s) mutatedType++; 
+                            const target = emptyIndices[randInt(emptyCount)];
+                            if (nxtState[target] === EMPTY) {
+                                nxtState[target] = mutatedType;
+                                if (mutatedType === BLUE) nxtDir[target] = randInt(4);
+                            }
+                        } 
+                        else if (roll < 0.666) {
+                            let compLen = 0;
+                            componentTypes[compLen++] = s; 
+                            for (let k = 0; k < 8; k++) {
+                                const ns = curState[neighborIndices[k]];
+                                if (ns !== EMPTY && ns !== CORPSE) {
+                                    componentTypes[compLen++] = ns;
+                                }
+                            }
+                            for (let k = 0; k < emptyCount; k++) {
+                                if (rand() < 0.6) { 
+                                    const target = emptyIndices[k];
+                                    if (nxtState[target] === EMPTY) {
+                                        const chosenType = componentTypes[randInt(compLen)];
+                                        nxtState[target] = chosenType;
+                                        if (chosenType === BLUE) nxtDir[target] = randInt(4);
+                                    }
+                                }
+                            }
+                        } 
+                        else if (roll < 0.998) {
+                            const target = emptyIndices[randInt(emptyCount)];
+                            if (nxtState[target] === EMPTY) {
+                                nxtState[target] = s;
+                            }
+                        }
+                    }
+                }
+            } else if (s === RED) {
+                let hasRed = false;
+                for (let k = 0; k < 8; k++) if (curState[neighborIndices[k]] === RED) { hasRed = true; break; }
+                if (hasRed) { nxtState[i] = CORPSE; nxtAge[i] = 0; } 
+                else {
+                    for (let k = 0; k < 8; k++) {
+                        const ns = curState[neighborIndices[k]];
+                        if (ns >= GREEN && ns <= PURPLE && ns !== RED) { nxtState[neighborIndices[k]] = CORPSE; nxtAge[neighborIndices[k]] = 0; } 
+                        else if (ns === CORPSE) nxtState[neighborIndices[k]] = EMPTY;
+                    }
+                }
+            } else if (s === YELLOW) {
+                for (let k = 0; k < 8; k++) if (curState[neighborIndices[k]] === CORPSE) nxtState[neighborIndices[k]] = EMPTY;
+            } else if (s === CORPSE) {
+                let age = curAge[i] + 1, allDead = true;
+                for (let k = 0; k < 8; k++) if (curState[neighborIndices[k]] !== CORPSE) { allDead = false; break; }
+                if (allDead) nxtAge[i] = age; 
+                else if (age >= 3) nxtState[i] = EMPTY; 
+                else nxtAge[i] = age;
+            }
+        }
+    }
+
+    intentCount = 0; occupied.fill(0);
+    for (let i = 0; i < N; i++) {
+        if (nxtState[i] === BLUE) {
+            const x = i % W, y = (i / W) | 0;
+            const dir = nxtDir[i], dx = DX[dir], dy = DY[dir];
+            let cx = ((x + dx) % W + W) % W, cy = ((y + dy) % H + H) % H;
+            let chainLen = 0, valid = true;
+            
+            while (true) {
+                const idx = cy * W + cx, s = nxtState[idx];
+                if (s === EMPTY) { chainLen++; break; } 
+                else if (s === GREEN || s === RED || s === YELLOW || s === PURPLE || s === BLUE) {
+                    chainLen++; 
+                    cx = ((cx + dx) % W + W) % W; 
+                    cy = ((cy + dy) % H + H) % H;
+                    if (cx === x && cy === y) { valid = false; break; } 
+                } else { 
+                    valid = false; break; 
+                }
+            }
+            
+            if (valid && chainLen > 0 && intentCount < MAX_INTENTS) {
+                intentBlue[intentCount] = i; 
+                intentLen[intentCount] = chainLen; 
+                intentDir[intentCount] = dir; 
+                intentCount++;
+            }
+        }
+    }
+
+    for (let i = intentCount - 1; i > 0; i--) {
+        const j = randInt(i + 1);
+        let tmp = intentBlue[i]; intentBlue[i] = intentBlue[j]; intentBlue[j] = tmp;
+        tmp = intentLen[i]; intentLen[i] = intentLen[j]; intentLen[j] = tmp;
+        tmp = intentDir[i]; intentDir[i] = intentDir[j]; intentDir[j] = tmp;
+    }
+
+    for (let k = 0; k < intentCount; k++) {
+        const blueIdx = intentBlue[k], chainLen = intentLen[k], dir = intentDir[k];
+        const bx = blueIdx % W, by = (blueIdx / W) | 0, dx = DX[dir], dy = DY[dir];
+        let conflict = false, cx = ((bx + dx) % W + W) % W, cy = ((by + dy) % H + H) % H;
+        for (let m = 0; m < chainLen; m++) {
+            const idx = cy * W + cx;
+            if (occupied[idx]) { conflict = true; break; }
+            cx = ((cx + dx) % W + W) % W; cy = ((cy + dy) % H + H) % H;
+        }
+        if (conflict) continue;
+
+        let endX = ((bx + dx * chainLen) % W + W) % W, endY = ((by + dy * chainLen) % H + H) % H;
+        let nextIdx = endY * W + endX;
+        let prevX = ((endX - dx) % W + W) % W, prevY = ((endY - dy) % H + H) % H, prevIdx = prevY * W + prevX;
+
+        for (let m = 0; m < chainLen - 1; m++) {
+            nxtState[nextIdx] = nxtState[prevIdx]; nxtDir[nextIdx] = nxtDir[prevIdx]; nxtAge[nextIdx] = nxtAge[prevIdx]; occupied[nextIdx] = 1;
+            nextIdx = prevIdx; prevX = ((prevX - dx) % W + W) % W; prevY = ((prevY - dy) % H + H) % H; prevIdx = prevY * W + prevX;
+        }
+        nxtState[nextIdx] = BLUE; nxtDir[nextIdx] = dir; nxtAge[nextIdx] = 0; occupied[nextIdx] = 1;
+        nxtState[blueIdx] = EMPTY;
+    }
+
+    [curState, nxtState] = [nxtState, curState];
+    [curDir, nxtDir] = [nxtDir, curDir];
+    [curAge, nxtAge] = [nxtAge, curAge];
+}
+
+// ================= 屏幕交互控制与点击映射 =================
+let isRunning = false;
+let stepCount = 0;
+let lastStepTime = 0;
+let currentTool = 0;
+let isDrawing = false;
+let lastDrawIdx = -1;
+
+function getCanvasIdx(e) {
+    const rect = canvas.getBoundingClientRect();
+    const clickX = e.clientX - rect.left + viewContainer.scrollLeft;
+    const clickY = e.clientY - rect.top + viewContainer.scrollTop;
+    const x = Math.floor(clickX / cellSize);
+    const y = Math.floor(clickY / cellSize);
+    return (x >= 0 && x < W && y >= 0 && y < H) ? y * W + x : -1;
+}
+
+function drawAt(idx, isClick) {
+    if (idx === -1) return;
+    if (currentTool === 0) {
+        curState[idx] = EMPTY;
+    } else if (currentTool === 2 && curState[idx] === BLUE) {
+        if (isClick) curDir[idx] = (curDir[idx] + 1) % 4;
+        else return; 
+    } else {
+        curState[idx] = currentTool;
+        if (currentTool === BLUE) curDir[idx] = randInt(4);
+    }
+    nxtState[idx] = curState[idx]; nxtDir[idx] = curDir[idx]; nxtAge[idx] = curAge[idx];
+    render();
+}
+
+canvas.addEventListener('mousedown', (e) => { e.preventDefault(); isDrawing = true; const idx = getCanvasIdx(e); lastDrawIdx = idx; drawAt(idx, true); });
+canvas.addEventListener('mousemove', (e) => { if (!isDrawing) return; const idx = getCanvasIdx(e); if (idx !== lastDrawIdx) { lastDrawIdx = idx; drawAt(idx, false); } });
+window.addEventListener('mouseup', () => { isDrawing = false; lastDrawIdx = -1; });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+document.querySelectorAll('.tool-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentTool = parseInt(btn.dataset.tool);
+    });
+});
+
+// 核心修复区域：补全了截断的监听器逻辑
+document.getElementById('btnToggle').addEventListener('click', function() {
+    isRunning = !isRunning;
+    this.innerText = isRunning ? '⏸ 暂停' : '▶ 开始';
+    document.getElementById('status').innerText = isRunning ? '运行中' : '已暂停';
+    if (isRunning) lastStepTime = performance.now();
+});
+
+document.getElementById('btnClear').addEventListener('click', () => {
+    curState.fill(EMPTY); curDir.fill(0); curAge.fill(0); nxtState.fill(EMPTY);
+    stepCount = 0; document.getElementById('stepCount').innerText = 0;
+    render();
+});
+
+document.getElementById('btnRandom').addEventListener('click', () => {
+    curState.fill(EMPTY); curDir.fill(0); curAge.fill(0);
+    for (let i = 0; i < N; i++) {
+        const r = rand();
+        if (r < 0.004) curState[i] = GREEN;
+        else if (r < 0.008) curState[i] = PURPLE;
+        else if (r < 0.009) curState[i] = BLUE;
+        else if (r < 0.010) curState[i] = RED;
+        else if (r < 0.011) curState[i] = ORANGE;
+        else if (r < 0.012) curState[i] = YELLOW;
+        if (curState[i] === BLUE) curDir[i] = randInt(4);
+    }
+    nxtState.set(curState); nxtDir.set(curDir); nxtAge.set(curAge);
+    stepCount = 0; document.getElementById('stepCount').innerText = 0;
+    render();
+});
+
+function loop(timestamp) {
+    if (isRunning && timestamp - lastStepTime >= STEP_INTERVAL) {
+        update();
+        render();
+        stepCount++;
+        document.getElementById('stepCount').innerText = stepCount;
+        lastStepTime = timestamp;
+    }
+    // 已经移除了暂停时的全场重绘，彻底解决发热问题
+    requestAnimationFrame(loop);
+}
+
+// 启动初始化
+updateSpacer();
+render();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
